@@ -60,3 +60,7 @@ pixelpilot_config.h
 
 .vscode/
 build/
+
+# macOS Finder files
+**/.DS_Store
+**/__MACOSX/
