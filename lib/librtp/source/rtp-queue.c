@@ -286,7 +286,7 @@ struct rtp_packet_t* rtp_queue_read(struct rtp_queue_t* q)
 
 	assert(q->pos < q->capacity);
 	pkt = q->items[q->pos].pkt;
-	if (q->first_seq == pkt->rtp.seq)
+	if (q->threshold == 0 || q->first_seq == pkt->rtp.seq)
 	{
 		q->first_seq++;
 		q->size--;
