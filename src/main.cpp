@@ -47,10 +47,12 @@ extern "C" {
 #include "osd.hpp"
 #include "wfbcli.hpp"
 #include "dvr.h"
-#include "gstrtpreceiver.h"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
 #include "pixelpilot_config.h"
+#include "rtp_codec_detector.hpp"
+#include "rtp_receiver.hpp"
+#include "common.h"
 
 
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
@@ -87,8 +89,12 @@ bool osd_custom_message = false;
 bool disable_vsync = false;
 uint32_t refresh_frequency_ms = 1000;
 
+std::atomic<bool> codec_detected = false;
+std::atomic<bool> codec_changed = false;
+pthread_t tid_frame;
 VideoCodec codec = VideoCodec::H265;
 Dvr *dvr = NULL;
+int dvr_autostart = 0;
 
 void init_buffer(MppFrame frame) {
 	output_list->video_frm_width = mpp_frame_get_width(frame);
@@ -221,7 +227,18 @@ void *__FRAME_THREAD__(void *param)
 
 	while (!frm_eos) {
 		struct timespec ts, ats;
-		
+
+		// Skip frame till codec will no be detected
+		if (!codec_detected.load())
+		{
+			usleep(50000);
+			continue;
+		}
+		if (codec_changed.load())
+		{
+			spdlog::info("Frame thread exiting due to changed codec.");
+			return nullptr;
+		}
 		assert(!frame);
 		ret = mpi.mpi->decode_get_frame(mpi.ctx, &frame);
 		assert(!ret);
@@ -353,8 +370,11 @@ void sig_handler(int signum)
 
 void sigusr1_handler(int signum) {
 	spdlog::info("Received signal {}", signum);
-	if (dvr) {
+	if (dvr && codec == VideoCodec::H265) {
 		dvr->toggle_recording();
+	}
+	else if (dvr && codec != VideoCodec::H265) {
+		spdlog::warn("Received signal {} DVR can not start recording due to unsupported codec {}", signum, codec_type_name(codec));
 	}
 }
 
@@ -378,7 +398,7 @@ void sigusr2_handler(int signum) {
 }
 
 int decoder_stalled_count=0;
-bool feed_packet_to_decoder(MppPacket *packet,void* data_p,int data_len){
+bool feed_packet_to_decoder(MppPacket* packet, void* data_p, int data_len){
     mpp_packet_set_data(packet, data_p);
     mpp_packet_set_size(packet, data_len);
     mpp_packet_set_pos(packet, data_p);
@@ -401,47 +421,7 @@ bool feed_packet_to_decoder(MppPacket *packet,void* data_p,int data_len){
     return true;
 }
 
-uint64_t first_frame_ms=0;
-void read_gstreamerpipe_stream(MppPacket *packet, int gst_udp_port, const char *sock ,const VideoCodec& codec){
-	std::unique_ptr<GstRtpReceiver> receiver;
-	if (sock) {
-		receiver = std::make_unique<GstRtpReceiver>(sock, codec);
-	} else {
-		receiver = std::make_unique<GstRtpReceiver>(gst_udp_port, codec);
-	}
-	long long bytes_received = 0; 
-	uint64_t period_start=0;
-    auto cb=[&packet,/*&decoder_stalled_count,*/ &bytes_received, &period_start](std::shared_ptr<std::vector<uint8_t>> frame){
-        // Let the gst pull thread run at quite high priority
-        static bool first= false;
-        if(first){
-            SchedulingHelper::set_thread_params_max_realtime("DisplayThread",SchedulingHelper::PRIORITY_REALTIME_LOW);
-            first= false;
-        }
-		bytes_received += frame->size();
-		uint64_t now = get_time_ms();
-		osd_publish_uint_fact("gstreamer.received_bytes", NULL, 0, frame->size());
-        feed_packet_to_decoder(packet,frame->data(),frame->size());
-        if (dvr_enabled && dvr != NULL) {
-			dvr->frame(frame);
-        }
-    };
-    receiver->start_receiving(cb);
-    while (!signal_flag){
-        sleep(10);
-    }
-    receiver->stop_receiving();
-    spdlog::info("Feeding eos");
-    mpp_packet_set_eos(packet);
-    //mpp_packet_set_pos(packet, nal_buffer);
-    mpp_packet_set_length(packet, 0);
-    int ret=0;
-    while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
-        usleep(10000);
-    }
-};
-
-void set_control_verbose(MppApi * mpi,  MppCtx ctx,MpiCmd control,RK_U32 enable){
+void set_control_verbose(MppApi* mpi, MppCtx ctx, MpiCmd control, RK_U32 enable){
     RK_U32 res = mpi->control(ctx, control, &enable);
     if(res){
         spdlog::warn("Could not set control {} {}", control, enable);
@@ -449,7 +429,7 @@ void set_control_verbose(MppApi * mpi,  MppCtx ctx,MpiCmd control,RK_U32 enable)
     }
 }
 
-void set_mpp_decoding_parameters(MppApi * mpi,  MppCtx ctx) {
+void set_mpp_decoding_parameters(MppApi* mpi, MppCtx ctx) {
     // config for runtime mode
     MppDecCfg cfg       = NULL;
     mpp_dec_cfg_init(&cfg);
@@ -472,11 +452,14 @@ void set_mpp_decoding_parameters(MppApi * mpi,  MppCtx ctx) {
         spdlog::warn("{} failed to set cfg {} ret {}", ctx, cfg, ret);
         assert(false);
     }
-	int mpp_split_mode =0;
-    set_control_verbose(mpi,ctx,MPP_DEC_SET_PARSER_SPLIT_MODE, mpp_split_mode ? 0xffff : 0);
-    set_control_verbose(mpi,ctx,MPP_DEC_SET_DISABLE_ERROR, 0xffff);
-    set_control_verbose(mpi,ctx,MPP_DEC_SET_IMMEDIATE_OUT, 0xffff);
-    set_control_verbose(mpi,ctx,MPP_DEC_SET_ENABLE_FAST_PLAY, 0xffff);
+	int mpp_split_mode = 1;// Enable split mode
+    set_control_verbose(mpi,ctx,MPP_DEC_SET_PARSER_SPLIT_MODE, mpp_split_mode);
+    int disable_error = 1; // Disable error handling
+	set_control_verbose(mpi,ctx,MPP_DEC_SET_DISABLE_ERROR, disable_error);
+	int immediate_out = 1; // Enable immediate output
+    set_control_verbose(mpi,ctx,MPP_DEC_SET_IMMEDIATE_OUT, immediate_out);
+	int fast_play = 1; // Enable fast play mode
+    set_control_verbose(mpi,ctx,MPP_DEC_SET_ENABLE_FAST_PLAY, fast_play);
     //set_control_verbose(mpi,ctx,MPP_DEC_SET_ENABLE_DEINTERLACE, 0xffff);
     // Docu fast mode:
     // and improve the
@@ -485,6 +468,216 @@ void set_mpp_decoding_parameters(MppApi * mpi,  MppCtx ctx) {
     int fast_mode = 0;
     set_control_verbose(mpi,ctx,MPP_DEC_SET_PARSER_FAST_MODE,fast_mode);
 }
+
+void setup_mpi(MppPacket &packet, uint8_t* nal_buffer)
+{
+	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC;
+	if(codec==VideoCodec::H264) {
+		mpp_type = MPP_VIDEO_CodingAVC;
+	}
+	int ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
+	assert(!ret);
+
+	nal_buffer = (uint8_t*)malloc(1024 * 1024);
+	assert(nal_buffer);
+	ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
+	assert(!ret);
+
+	ret = mpp_create(&mpi.ctx, &mpi.mpi);
+	assert(!ret);
+	ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);
+    assert(!ret);
+    set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
+
+    RK_S64 block = 10; // 10 ms timeout for input/output operations for catch signals
+    ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_TIMEOUT, &block);
+	assert(!ret);
+
+	spdlog::info("MPI SETUP: Done!");
+}
+
+void cleanup_mpi(MppPacket &packet, uint8_t* nal_buffer)
+{
+	int i;
+
+	int ret = mpi.mpi->reset(mpi.ctx);
+	assert(!ret);
+
+	if (mpi.frm_grp) {
+		ret = mpp_buffer_group_put(mpi.frm_grp);
+		assert(!ret);
+		mpi.frm_grp = NULL;
+		for (i=0; i<MAX_FRAMES; i++) {
+			ret = drmModeRmFB(drm_fd, mpi.frame_to_drm[i].fb_id);
+			assert(!ret);
+			struct drm_mode_destroy_dumb dmdd;
+			memset(&dmdd, 0, sizeof(dmdd));
+			dmdd.handle = mpi.frame_to_drm[i].handle;
+			do {
+				ret = ioctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
+			} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+			assert(!ret);
+		}
+	}
+		
+	mpp_packet_deinit(&packet);
+	mpp_destroy(mpi.ctx);
+	free(nal_buffer);
+
+	spdlog::info("MPI CLEANUP: Done!");
+}
+
+int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
+{
+	int ret = modeset_open(&drm_fd, "/dev/dri/card0");
+	if (ret < 0) {
+		spdlog::warn("modeset_open() =  {}", ret);
+	}
+	assert(drm_fd >= 0);
+	if (print_modelist) {
+		modeset_print_modes(drm_fd);
+		close(drm_fd);
+		return 0;
+	}
+
+	output_list = modeset_prepare(drm_fd, mode_width, mode_height, mode_vrefresh);
+	if (!output_list) {
+		fprintf(stderr,
+				"cannot initialize display. Is display connected? Is --screen-mode correct?\n");
+		return -2;
+	}
+	return 1;
+	spdlog::info("DRM SETUP: Done!");
+}
+
+void cleanup_drm()
+{
+	restore_planes_zpos(drm_fd, output_list);
+	drmModeSetCrtc(drm_fd,
+			       output_list->saved_crtc->crtc_id,
+			       output_list->saved_crtc->buffer_id,
+			       output_list->saved_crtc->x,
+			       output_list->saved_crtc->y,
+			       &output_list->connector.id,
+			       1,
+			       &output_list->saved_crtc->mode);
+	drmModeFreeCrtc(output_list->saved_crtc);
+	drmModeAtomicFree(output_list->video_request);
+	drmModeAtomicFree(output_list->osd_request);
+	modeset_cleanup(drm_fd, output_list);
+	close(drm_fd);
+
+	spdlog::info("DRM CLEANUP: Done!");
+}
+
+void restart_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
+{
+	cleanup_drm();
+	setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
+
+	spdlog::info("DRM RESTART: Done!");
+}
+
+void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
+{
+	codec_changed.store(true);
+	spdlog::info("[ MPI RESTART ] current codec: {} new codec: {}", codec_type_name(codec), codec_type_name(new_codec));
+	codec = new_codec;
+	int ret = pthread_join(tid_frame, NULL);
+	assert(!ret);
+
+	ret = pthread_mutex_lock(&video_mutex);
+	assert(!ret);
+	ret = pthread_cond_signal(&video_cond);
+	assert(!ret);
+	ret = pthread_mutex_unlock(&video_mutex);
+	assert(!ret);
+
+	cleanup_mpi(packet, nal_buffer);
+	setup_mpi(packet, nal_buffer);
+	codec_changed.store(false);
+
+
+	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
+	assert(!ret);
+
+	spdlog::info("MPI RESTART: Done!");
+}
+
+uint64_t first_frame_ms=0;
+void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, const char* sock){
+	std::unique_ptr<RtpReceiver> rtp_receiver;
+	if (sock) {
+		rtp_receiver = std::make_unique<RtpReceiver>(sock);
+	} else {
+		rtp_receiver = std::make_unique<RtpReceiver>(udp_port);
+	}
+
+	rtp_receiver->init();
+	codec = rtp_receiver->get_video_codec();
+
+	setup_mpi(packet, nal_buffer);
+	
+	codec_detected.store(true);
+
+	long long bytes_received = 0; 
+	uint64_t period_start=0;
+	auto cb=[&packet, &rtp_receiver, /*&decoder_stalled_count,*/ &bytes_received, &period_start](void *data, int size, bool is_codec_changed){
+        // Let pull thread run at quite high priority
+        static bool first= false;
+        if(first){
+            SchedulingHelper::set_thread_params_max_realtime("DisplayThread",SchedulingHelper::PRIORITY_REALTIME_LOW);
+            first= false;
+        }
+		if (is_codec_changed)
+		{
+			codec_changed.store(true);
+		}
+		bytes_received += size;
+		uint64_t now = get_time_ms();
+		osd_publish_uint_fact("rtp.received_bytes", NULL, 0, size);
+        feed_packet_to_decoder((void **)packet,data,size);
+        if (dvr_enabled && dvr != NULL && codec == VideoCodec::H265) {
+			auto frame = std::make_shared<std::vector<uint8_t>>(size);
+			std::memcpy(frame->data(), data, size);
+			dvr->frame(frame);
+        }
+    };
+	rtp_receiver->start_receiving(cb);
+	// TODO: DVR Recording allowed only for H265 due unclear bug in librtp we receive corrupted data for H264 codec and due to that dvr can't write data correctly
+	if (dvr_autostart && dvr != NULL && codec == VideoCodec::H265) {
+		dvr->start_recording();
+	}
+
+    while (!signal_flag){
+		if (codec_changed.load())
+		{
+			rtp_receiver->stop_receiving();
+			mpp_packet_set_eos(packet);
+			//mpp_packet_set_pos(packet, nal_buffer);
+			mpp_packet_set_length(packet, 0);
+			int ret=0;
+			while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
+				usleep(10000);
+			}
+			restart_mpi(packet, nal_buffer, rtp_receiver->get_video_codec());
+			rtp_receiver->start_receiving(cb);
+		}
+		else {
+	        sleep(10);
+		}
+    }
+	rtp_receiver->stop_receiving();
+    spdlog::info("Feeding eos");
+    mpp_packet_set_eos(packet);
+    //mpp_packet_set_pos(packet, nal_buffer);
+    mpp_packet_set_length(packet, 0);
+    int ret=0;
+    while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
+        usleep(10000);
+    }
+};
+
 
 void printHelp() {
   printf(
@@ -502,7 +695,8 @@ void printHelp() {
     "\n"
     "    --mavlink-dvr-on-arm   - Start recording when armed\n"
     "\n"
-    "    --codec <codec>        - Video codec, should be the same as on VTX  (Default: h265 <h264|h265>)\n"
+    "    --codec <codec>        - [ Deprecated ] Video codec, should be the same as on VTX  (Default: h265 <h264|h265>)\n"
+	"                             Now codec is detected dynamically during runtime. Passed value <codec> will ignored\n"
     "\n"
     "    --log-level <level>    - Log verbosity level, debug|info|warn|error (Default: info)\n"
     "\n"
@@ -548,7 +742,6 @@ int main(int argc, char **argv)
 	int ret;	
 	int i, j;
 	int mavlink_thread = 0;
-	int dvr_autostart = 0;
 	int print_modelist = 0;
 	char* dvr_template = NULL;
 	int video_framerate = -1;
@@ -568,6 +761,9 @@ int main(int argc, char **argv)
     pidFile << getpid();
     pidFile.close();
 
+	MppPacket packet;
+	uint8_t* nal_buffer = NULL;
+
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
 	
@@ -583,11 +779,7 @@ int main(int argc, char **argv)
 
 	__OnArgument("--codec") {
 		char * codec_str = const_cast<char*>(__ArgValue);
-		codec = video_codec(codec_str);
-		if (codec == VideoCodec::UNKNOWN ) {
-			fprintf(stderr, "unsupported video codec");
-			return -1;
-		}
+		spdlog::warn("--codec parameter is removed.");
 		continue;
 	}
 
@@ -726,55 +918,12 @@ int main(int argc, char **argv)
 	if (enable_osd == 0 ) {
 		video_zpos = 4;
 	}
-	
-	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC;
-	if(codec==VideoCodec::H264) {
-		mpp_type = MPP_VIDEO_CodingAVC;
-	}
-	ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
-	assert(!ret);
-	
-	//////////////////////////////////  DRM SETUP
-	ret = modeset_open(&drm_fd, "/dev/dri/card0");
-	if (ret < 0) {
-		spdlog::warn("modeset_open() =  {}", ret);
-	}
-	assert(drm_fd >= 0);
-	if (print_modelist) {
-		modeset_print_modes(drm_fd);
-		close(drm_fd);
-		return 0;
-	}
 
-	output_list = modeset_prepare(drm_fd, mode_width, mode_height, mode_vrefresh);
-	if (!output_list) {
-		fprintf(stderr,
-				"cannot initialize display. Is display connected? Is --screen-mode correct?\n");
-		return -2;
-	}
-	
-	////////////////////////////////// MPI SETUP
-	MppPacket packet;
+    ////////////////////////////////////////////// DRM SETUP
 
-	uint8_t* nal_buffer = (uint8_t*)malloc(1024 * 1024);
-	assert(nal_buffer);
-	ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
-	assert(!ret);
+	setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
 
-	ret = mpp_create(&mpi.ctx, &mpi.mpi);
-	assert(!ret);
-    set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
-	ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);
-    assert(!ret);
-    set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
-
-	// blocked/wait read of frame in thread
-	int param = MPP_POLL_BLOCK;
-	ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_BLOCK, &param);
-	assert(!ret);
-
-
-	////////////////////////////////// SIGNAL SETUP
+	////////////////////////////////////////////// SIGNAL SETUP
 
 	signal(SIGINT, sig_handler);
 	signal(SIGPIPE, sig_handler);
@@ -782,14 +931,15 @@ int main(int argc, char **argv)
 		signal(SIGUSR1, sigusr1_handler);
 	}
 	signal(SIGUSR2, sigusr2_handler);
- 	//////////////////// THREADS SETUP
+
+ 	////////////////////////////////////////////// THREAD SETUP
 	
 	ret = pthread_mutex_init(&video_mutex, NULL);
 	assert(!ret);
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink, tid_dvr, tid_wfbcli;
+	pthread_t tid_display, tid_osd, tid_mavlink, tid_dvr, tid_wfbcli;
 	if (dvr_template != NULL) {
 		dvr_thread_params args;
 		args.filename_template = dvr_template;
@@ -801,9 +951,6 @@ int main(int argc, char **argv)
 		args.video_p.codec = codec;
 		dvr = new Dvr(args);
 		ret = pthread_create(&tid_dvr, NULL, &Dvr::__THREAD__, dvr);
-		if (dvr_autostart) {
-			dvr->start_recording();
-		}
 	}
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
@@ -837,9 +984,10 @@ int main(int argc, char **argv)
 	}
 
 	////////////////////////////////////////////// MAIN LOOP
-    read_gstreamerpipe_stream((void**)packet, listen_port, unix_socket, codec);
 
-	////////////////////////////////////////////// MPI CLEANUP
+	read_video_stream(packet, nal_buffer, listen_port, unix_socket);
+
+    ////////////////////////////////////////////// THREAD CLEANUP
 
 	ret = pthread_join(tid_frame, NULL);
 	assert(!ret);
@@ -874,45 +1022,13 @@ int main(int argc, char **argv)
 		assert(!ret);
 	}
 
-	ret = mpi.mpi->reset(mpi.ctx);
-	assert(!ret);
+	////////////////////////////////////////////// MPI CLEANUP
 
-	if (mpi.frm_grp) {
-		ret = mpp_buffer_group_put(mpi.frm_grp);
-		assert(!ret);
-		mpi.frm_grp = NULL;
-		for (i=0; i<MAX_FRAMES; i++) {
-			ret = drmModeRmFB(drm_fd, mpi.frame_to_drm[i].fb_id);
-			assert(!ret);
-			struct drm_mode_destroy_dumb dmdd;
-			memset(&dmdd, 0, sizeof(dmdd));
-			dmdd.handle = mpi.frame_to_drm[i].handle;
-			do {
-				ret = ioctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
-			} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-			assert(!ret);
-		}
-	}
-		
-	mpp_packet_deinit(&packet);
-	mpp_destroy(mpi.ctx);
-	free(nal_buffer);
-	
+	cleanup_mpi(packet, nal_buffer);
+
 	////////////////////////////////////////////// DRM CLEANUP
-	restore_planes_zpos(drm_fd, output_list);
-	drmModeSetCrtc(drm_fd,
-			       output_list->saved_crtc->crtc_id,
-			       output_list->saved_crtc->buffer_id,
-			       output_list->saved_crtc->x,
-			       output_list->saved_crtc->y,
-			       &output_list->connector.id,
-			       1,
-			       &output_list->saved_crtc->mode);
-	drmModeFreeCrtc(output_list->saved_crtc);
-	drmModeAtomicFree(output_list->video_request);
-	drmModeAtomicFree(output_list->osd_request);
-	modeset_cleanup(drm_fd, output_list);
-	close(drm_fd);
+
+	cleanup_drm();
 
     remove(pidFilePath.c_str());
 
