@@ -41,8 +41,6 @@ pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
 pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
 pkg_check_modules(SPDLOG REQUIRED IMPORTED_TARGET spdlog)
 pkg_check_modules(NLOHMANN REQUIRED IMPORTED_TARGET nlohmann_json)
-pkg_check_modules(GST REQUIRED IMPORTED_TARGET gstreamer-1.0>=1.4)
-pkg_check_modules(GST_APP REQUIRED IMPORTED_TARGET gstreamer-app-1.0>=1.4)
 pkg_check_modules(MSGPACK REQUIRED IMPORTED_TARGET msgpack)
 
 include_directories(${PROJECT_NAME}
@@ -58,8 +56,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE m rtp
         PkgConfig::CAIRO
         PkgConfig::SPDLOG
         PkgConfig::NLOHMANN
-        PkgConfig::GST
-        PkgConfig::GST_APP
         PkgConfig::MSGPACK
         rockchip_mpp pthread m rt
         PkgConfig::LIBRGA
