@@ -140,7 +140,7 @@ void RtpReceiver::rtp_receiver_thread()
 
     // Create main demuxer for packet processing
     struct rtp_demuxer_t* demuxer = rtp_demuxer_create(
-            10, 90000, RTP_PAYLOAD_DYNAMIC,
+            0, 90000, RTP_PAYLOAD_DYNAMIC,
             codec_name.c_str(),
             main_rtp_cb, this);
 
