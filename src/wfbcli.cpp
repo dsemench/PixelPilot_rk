@@ -123,6 +123,13 @@ int process_rx(const msgpack::object& packet) {
         osd_add_int_fact(batch, "wfbcli.rx.ant_stats.snr_max", tags, 2, snr_max);
     }
 
+    static auto prev_time = std::chrono::steady_clock::now();
+    auto current_time = std::chrono::steady_clock::now();
+    // check difference between packets more then 3 sec if true set drone connection lost
+    if (std::chrono::duration_cast<std::chrono::seconds>(current_time - prev_time).count() > 3) {
+        osd_add_bool_fact(batch, "wfbcli.drone.connected", tags, 1, false);
+    }
+
     if (ant_count > 0) {
         int32_t avg_rssi = total_rssi_avg / (int32_t)ant_count;
         int32_t avg_snr = total_snr_avg / (int32_t)ant_count;
@@ -130,6 +137,8 @@ int process_rx(const msgpack::object& packet) {
         osd_add_int_fact(batch, "wfbcli.rx.ant_stats.snr_avg_global", tags, 1, avg_snr);
         osd_add_int_fact(batch, "wfbcli.rx.ant_stats.rssi_avg_best", tags, 1, best_rssi_avg);
         osd_add_int_fact(batch, "wfbcli.rx.ant_stats.snr_avg_best", tags, 1, best_snr_avg);
+        osd_add_bool_fact(batch, "wfbcli.drone.connected", tags, 1, true);
+        prev_time = current_time;
     }
 
     osd_publish_batch(batch);
@@ -241,7 +250,7 @@ int process_title(const msgpack::object& packet) {
         }
     }
 
-    void *batch = osd_batch_init(2);
+    void *batch = osd_batch_init(3);
     osd_add_str_fact(batch, "wfbcli.cli_title", nullptr, 0, cli_title.c_str());
     osd_add_bool_fact(batch, "wfbcli.is_cluster", nullptr, 0, is_cluster);
     osd_add_uint_fact(batch, "wfbcli.temp_overheat_warning", nullptr, 0, temp_overheat_warning);
@@ -328,6 +337,7 @@ int reconnect_to_server(int port) {
 			if (inet_pton(AF_INET, SERVER_IP, &server_address.sin_addr) > 0) {
 				if (connect(sock, (struct sockaddr *)&server_address, sizeof(server_address)) == 0) {
 					SPDLOG_DEBUG("Successfully connected to WFB API server.");
+                    osd_publish_bool_fact("wfbcli.rx.connected", NULL, 0, true);
 					return sock;
 				} else {
 					SPDLOG_ERROR("Connection failed");
@@ -350,6 +360,10 @@ void *__WFB_CLI_THREAD__(void *param) {
 	pthread_setname_np(pthread_self(), "__WFB_CLI");
 
 	while (!wfb_thread_signal) {
+        void *batch = osd_batch_init(2);
+        osd_add_bool_fact(batch, "wfbcli.rx.connected", NULL, 0, false);
+        osd_add_bool_fact(batch, "wfbcli.drone.connected", NULL, 0, false);
+        osd_publish_batch(batch);
 		int sock = reconnect_to_server(p->port);
 		handle_server_connection(sock);
 		// If we return from handle_server_connection, the server is disconnected
