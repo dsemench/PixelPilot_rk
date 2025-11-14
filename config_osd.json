@@ -59,7 +59,7 @@
       "type": "IconStatusWidget",
       "x": -50,
       "y": -24,
-      "icon_path": "wfb.png",
+      "icon_path": "tower-cell.png",
       "per_second_window_s": 2,
       "per_second_bucket_ms": 100,
       "facts": [

@@ -831,14 +831,13 @@ public:
 		if(args[0].isDefined() && args[0].getBoolValue()) {
 			auto [x, y] = xy(cr);
 			cairo_save(cr);
-			cairo_set_source_rgba(cr, 0.0, 1.0, 0.0, 1.0); // pure green
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0); // active - pure white
 			cairo_mask_surface(cr, icon, x, y - 20);
 			cairo_restore(cr);
-		}
-		else {
+		} else {
 			auto [x, y] = xy(cr);
 			cairo_save(cr);
-			cairo_set_source_rgba(cr, 1.0, 0.0, 0.0, 1.0); // pure red
+			cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 1.0); // inactive - gray
 			cairo_mask_surface(cr, icon, x, y - 20);
 			cairo_restore(cr);
 		}
