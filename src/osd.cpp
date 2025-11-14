@@ -444,6 +444,22 @@ protected:
 	std::string text;
 };
 
+class IconWidget: public Widget {
+public:
+	IconWidget(int pos_x, int pos_y, cairo_surface_t *icon):
+		Widget(pos_x, pos_y), icon(icon) {};
+
+	virtual void draw(cairo_t *cr) {
+		auto [x, y] = xy(cr);
+		cairo_set_source_surface(cr, icon, x, y - 20);
+		cairo_paint(cr);
+		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
+	}
+
+protected:
+	cairo_surface_t *icon;
+};
+
 
 class IconTextWidget: public Widget {
 public:
@@ -803,6 +819,31 @@ public:
 		}
 	}
 };
+
+class IconStatusWidget: public IconWidget {
+public:
+	IconStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon) :
+		IconWidget(pos_x, pos_y, icon) {
+		args.push_back(Fact());
+	};
+
+	void draw(cairo_t *cr) {
+		if(args[0].isDefined() && args[0].getBoolValue()) {
+			auto [x, y] = xy(cr);
+			cairo_save(cr);
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0); // active - pure white
+			cairo_mask_surface(cr, icon, x, y - 20);
+			cairo_restore(cr);
+		} else {
+			auto [x, y] = xy(cr);
+			cairo_save(cr);
+			cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 1.0); // inactive - gray
+			cairo_mask_surface(cr, icon, x, y - 20);
+			cairo_restore(cr);
+		}
+	}
+};
+
 
 class VideoWidget: public IconTplTextWidget {
 public:
@@ -1195,6 +1236,11 @@ public:
 				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
 				if (icon == NULL) break;
 				addWidget(new DvrStatusWidget(x, y, icon, text), matchers);
+			} else if(type == "IconStatusWidget") {
+				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
+				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
+				if (icon == NULL) break;
+				addWidget(new IconStatusWidget(x, y, icon), matchers);
 			} else if(type == "VideoWidget") {
 				auto tpl = widget_j.at("template").template get<std::string>();
 				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();

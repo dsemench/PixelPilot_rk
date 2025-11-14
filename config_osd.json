@@ -55,6 +55,30 @@
       ]
     },
     {
+      "name": "WFB client status",
+      "type": "IconStatusWidget",
+      "x": -50,
+      "y": -24,
+      "icon_path": "tower-cell.png",
+      "per_second_window_s": 2,
+      "per_second_bucket_ms": 100,
+      "facts": [
+        { "name": "wfbcli.rx.connected" }
+      ]
+    },
+    {
+      "name": "Drone connection status",
+      "type": "IconStatusWidget",
+      "x": -100,
+      "y": -24,
+      "icon_path": "drone.png",
+      "per_second_window_s": 2,
+      "per_second_bucket_ms": 100,
+      "facts": [
+        { "name": "wfbcli.drone.connected" }
+      ]
+    },
+    {
       "name": "DVR status",
       "type": "DvrStatusWidget",
       "x": -90,
