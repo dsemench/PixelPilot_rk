@@ -5,8 +5,6 @@ extern "C" {
 #include "drm.h"
 }
 #include <nlohmann/json.hpp>
-
-#include <nlohmann/json.hpp>
 #include <filesystem>
 
 namespace nlohmann {

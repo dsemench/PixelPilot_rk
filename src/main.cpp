@@ -288,7 +288,7 @@ void *__FRAME_THREAD__(void *param)
 			frame = NULL;
 		} else assert(0);
 	}
-	spdlog::info("Frame thread done.");
+	spdlog::info("Frame thread done");
 	return nullptr;
 }
 
@@ -348,7 +348,7 @@ void *__DISPLAY_THREAD__(void *param)
 		osd_publish_uint_fact("video.decode_and_handover_ms", NULL, 0, decode_and_handover_display_ms);
 	}
 end:	
-	spdlog::info("Display thread done.");
+	spdlog::info("Display thread done");
 	return nullptr;
 }
 
@@ -493,7 +493,7 @@ void setup_mpi(MppPacket &packet, uint8_t* nal_buffer)
     ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_TIMEOUT, &block);
 	assert(!ret);
 
-	spdlog::info("MPI SETUP: Done!");
+	spdlog::info("MPI setup done");
 }
 
 void cleanup_mpi(MppPacket &packet, uint8_t* nal_buffer)
@@ -524,7 +524,7 @@ void cleanup_mpi(MppPacket &packet, uint8_t* nal_buffer)
 	mpp_destroy(mpi.ctx);
 	free(nal_buffer);
 
-	spdlog::info("MPI CLEANUP: Done!");
+	spdlog::info("MPI cleanup done");
 }
 
 int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
@@ -547,7 +547,7 @@ int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uin
 		return -2;
 	}
 	return 1;
-	spdlog::info("DRM SETUP: Done!");
+	spdlog::info("DRM setup done");
 }
 
 void cleanup_drm()
@@ -567,7 +567,7 @@ void cleanup_drm()
 	modeset_cleanup(drm_fd, output_list);
 	close(drm_fd);
 
-	spdlog::info("DRM CLEANUP: Done!");
+	spdlog::info("DRM cleanup done");
 }
 
 void restart_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
@@ -575,13 +575,13 @@ void restart_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, 
 	cleanup_drm();
 	setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
 
-	spdlog::info("DRM RESTART: Done!");
+	spdlog::info("DRM restart done");
 }
 
 void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
 {
 	codec_changed.store(true);
-	spdlog::info("[ MPI RESTART ] current codec: {} new codec: {}", codec_type_name(codec), codec_type_name(new_codec));
+	spdlog::info("Current codec: {} new codec: {}", codec_type_name(codec), codec_type_name(new_codec));
 	codec = new_codec;
 	int ret = pthread_join(tid_frame, NULL);
 	assert(!ret);
@@ -601,7 +601,7 @@ void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
 
-	spdlog::info("MPI RESTART: Done!");
+	spdlog::info("MPI restart done");
 }
 
 uint64_t first_frame_ms=0;

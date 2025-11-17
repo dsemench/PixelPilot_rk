@@ -113,7 +113,6 @@ bool SocketHandler::init_connection()
     }
 
     return socket_connected;
-
 }
 
 bool SocketHandler::is_socket_connected()

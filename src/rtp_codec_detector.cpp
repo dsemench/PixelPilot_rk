@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /**
  * Copyright (C) 2025 Dmytro S <dmytriysemenchuk@gmail.com>
- */
+*/
 
 #include "rtp_codec_detector.hpp"
 
@@ -81,7 +81,7 @@ VideoCodec RtpCodecDecoder::detect_codec(int socket_fd)
         100, 90000, 0, NULL, detect_codec_cb, &detected_codec);
 
     if (!demuxer) {
-        spdlog::error("[ RtpCodecDecoder ] Failed to create RTP demuxer for detection");
+        spdlog::error("[ RtpCodecDecoder ] Failed to create RTP demuxer for codec detection");
         return VideoCodec::UNKNOWN;
     }
 
