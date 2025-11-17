@@ -5,6 +5,20 @@ extern "C" {
 #include "drm.h"
 }
 #include <nlohmann/json.hpp>
+#include <filesystem>
+
+namespace nlohmann {
+    template <>
+    struct adl_serializer<std::filesystem::path> {
+        static void to_json(json& j, const std::filesystem::path& p) {
+            j = p.string(); // convert path to string
+        }
+
+        static void from_json(const json& j, std::filesystem::path& p) {
+            p = j.get<std::string>(); // convert string to path
+        }
+    };
+}
 
 typedef struct {
 	struct modeset_output *out;

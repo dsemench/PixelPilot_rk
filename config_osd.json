@@ -27,7 +27,7 @@
       "per_second_window_s": 2,
       "per_second_bucket_ms": 100,
       "facts": [
-        { "name": "gstreamer.received_bytes" }
+        { "name": "rtp.received_bytes" }
       ]
     },
     {

@@ -8,7 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 
-#include "gstrtpreceiver.h"
+#include "common.h"
 
 struct MP4E_mux_tag;
 struct mp4_h26x_writer_tag;
