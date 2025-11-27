@@ -17,38 +17,85 @@
 
 static VideoCodec detect_rtp_codec(const uint8_t* payload, int payload_len)
 {
-    if (!payload || payload_len < 1)
+    if (!payload || payload_len < 64)
         return VideoCodec::UNKNOWN;
 
-    if (payload_len < 64)
-        return VideoCodec::UNKNOWN;
+    uint8_t b0 = payload[0];
+    uint8_t b1 = payload[1];
 
-    uint8_t nalu_hdr = payload[0];
+    bool h264_found = false;
+    bool h265_found = false;
 
-    // H.265
-    uint8_t h265_type = (nalu_hdr >> 1) & 0x3F;
-    spdlog::info("[ RTP DEMUXER ] NALU header: 0x{:02X}, H.265 type: {}\n", nalu_hdr, h265_type);
-    if ((h265_type >= 0 && h265_type <= 31) || (h265_type >= 32 && h265_type <= 34) || h265_type == 39)
-        return VideoCodec::H265;
-    if ((h265_type == 48 || h265_type == 49) && payload_len >= 3) {
-        uint8_t fu_h265_type = (payload[2] >> 1) & 0x3F;
-        if ((fu_h265_type >= 0 && fu_h265_type <= 31) || (fu_h265_type >= 32 && fu_h265_type <= 34) ||
-            fu_h265_type == 39)
-            return VideoCodec::H265;
+    // ================= H.264 (RFC 6184, RTP payload) =================
+    //
+    // b0: F(1) | NRI(2) | Type(5)
+    //
+    uint8_t h264_f = (b0 >> 7) & 0x01;
+    uint8_t h264_type = b0 & 0x1F;
+
+    if (h264_f == 0) {
+        //   1  - non-IDR slice
+        //   5  - IDR slice
+        //   7  - SPS
+        //   8  - PPS
+        if (h264_type == 1 || h264_type == 5 || h264_type == 7 || h264_type == 8) {
+            h264_found = true;
+        }
+
+        // --- Fragmentation units: FU-A / FU-B (types 28/29) ---
+        // RTP payload:
+        //   b0 = FU indicator (F|NRI|Type=28/29)
+        //   b1 = FU header: S(1) | E(1) | R(1) | Type(5)
+        //
+        if ((h264_type == 28 || h264_type == 29) && payload_len >= 2) {
+            uint8_t fu_hdr = b1;
+            uint8_t fu_s = (fu_hdr >> 7) & 0x01;
+            uint8_t fu_e = (fu_hdr >> 6) & 0x01;
+            uint8_t fu_type = fu_hdr & 0x1F;
+
+            if (fu_s && !fu_e && (fu_type == 1 || fu_type == 5)) {
+                h264_found = true;
+            }
+        }
     }
 
-    // H.264
-    uint8_t h264_type = nalu_hdr & 0x1F;
-    spdlog::info("[ RTP DEMUXER ] NALU header: 0x{:02X}, H.264 type: {}\n", nalu_hdr, h264_type);
-    if ((h264_type >= 1 && h264_type <= 23) || h264_type == 5)
+    // ================= H.265 (RFC 7798, RTP payload) =================
+    //
+    // PayloadHdr:
+    //   b0: F(1) | Type(6) | LayerId_high(1)
+    //   b1: LayerId_low(5) | TID(3)
+    //
+    uint8_t h265_f = (b0 >> 7) & 0x01;
+    uint8_t h265_type = (b0 >> 1) & 0x3F;  // 6-bit Type
+    uint8_t h265_tid_p = b1 & 0x07;  // TID+1 (1..7)
+
+    if (h265_f == 0 && h265_tid_p != 0) {
+        // --- Single NAL unit packet ---
+        //   19, 20 - IDR slices
+        //   32     - VPS
+        //   33     - SPS
+        //   34     - PPS
+        if (h265_type == 19 || h265_type == 20 || h265_type == 32 || h265_type == 33 || h265_type == 34) {
+            h265_found = true;
+        }
+
+        // --- Fragmentation Unit (FU), Type=49 ---
+        if (h265_type == 49 && payload_len >= 3) {
+            uint8_t fu_hdr = payload[2];
+            uint8_t fu_s = (fu_hdr >> 7) & 0x01;
+            uint8_t fu_e = (fu_hdr >> 6) & 0x01;
+            uint8_t fu_type = fu_hdr & 0x3F; // 6-bit FuType
+
+            if (fu_s && !fu_e && (fu_type == 19 || fu_type == 20)) {
+                h265_found = true;
+            }
+        }
+    }
+
+    if (h264_found && !h265_found)
         return VideoCodec::H264;
-    if (h264_type == 28 || h264_type == 29) {
-        if (payload_len < 2)
-            return VideoCodec::UNKNOWN;
-        uint8_t fu_type = payload[1] & 0x1F;
-        if ((fu_type >= 1 && fu_type <= 23) || fu_type == 5)
-            return VideoCodec::H264;
-    }
+    if (h265_found && !h264_found)
+        return VideoCodec::H265;
 
     return VideoCodec::UNKNOWN;
 }
@@ -60,7 +107,6 @@ static int detect_codec_cb(void* param, const void* packet, int bytes, uint32_t 
     VideoCodec codec = detect_rtp_codec(static_cast<const uint8_t*>(packet), bytes); // need cast here
     if (codec != VideoCodec::UNKNOWN) {
         *codec_ptr = codec;
-        spdlog::info("[ RTP DEMUXER ] Detected codec: {}\n", codec_type_name(codec));
         return 1; // Stop demuxing after detection
     }
     return 0; // Continue demuxing
