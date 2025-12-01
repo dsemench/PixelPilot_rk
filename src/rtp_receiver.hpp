@@ -35,9 +35,7 @@ public:
     explicit RtpReceiver(int port);
     explicit RtpReceiver(const char *unix_socket);
     ~RtpReceiver() = default;
-    // Depending on the codec, these are h264,h265 or mjpeg "frames" / frame buffers
-    // The big advantage of gstreamer is that it seems to handle all those parsing quirks the best,
-    // e.g. the frames on this cb should be easily passable to whatever decode api is available.
+
     typedef std::function<void(void *data, int size, bool)> NEW_FRAME_CALLBACK;
     void start_receiving(NEW_FRAME_CALLBACK cb);
     void stop_receiving();

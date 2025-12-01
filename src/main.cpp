@@ -605,7 +605,7 @@ void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
 }
 
 uint64_t first_frame_ms=0;
-void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, const char* sock){
+void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, const char* sock) {
 	std::unique_ptr<RtpReceiver> rtp_receiver;
 	if (sock) {
 		rtp_receiver = std::make_unique<RtpReceiver>(sock);

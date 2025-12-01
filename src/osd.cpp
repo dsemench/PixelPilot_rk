@@ -425,6 +425,67 @@ public:
 	}
 
 protected:
+	struct CairoColor {
+        double r;
+        double g;
+        double b;
+        double a;
+    };
+
+	void drawStrokeText(
+        cairo_t *cr,
+        double x, double y,
+        const std::string &text,
+        const CairoColor &fill,
+        const CairoColor &outline,
+        double outline_width
+    ) const {
+        cairo_save(cr);
+
+        cairo_move_to(cr, x, y);
+        cairo_text_path(cr, text.c_str());
+
+		if (outline_width > 0.0) {
+        	cairo_set_line_width(cr, outline_width);
+        	cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        	cairo_set_source_rgba(cr, outline.r, outline.g, outline.b, outline.a);
+        	cairo_stroke_preserve(cr);
+		}
+
+        cairo_set_source_rgba(cr, fill.r, fill.g, fill.b, fill.a);
+        cairo_fill(cr);
+
+        cairo_restore(cr);
+    }
+
+	void drawStrokeIcon(
+		cairo_t *cr,
+        cairo_surface_t *icon,
+        double x, double y,
+        const CairoColor &fill,
+        const CairoColor &outline,
+        int outline_width
+    ) const {
+        if (!icon) return;
+
+        cairo_save(cr);
+
+		if (outline_width > 0) {
+        	cairo_set_source_rgba(cr, outline.r, outline.g, outline.b, outline.a);
+        	for (int dx = -outline_width; dx <= outline_width; ++dx) {
+            	for (int dy = -outline_width; dy <= outline_width; ++dy) {
+                	if (dx * dx + dy * dy > outline_width * outline_width) continue;
+                	cairo_mask_surface(cr, icon, x + dx, y + dy);
+            	}
+        	}
+		}
+
+        cairo_set_source_rgba(cr, fill.r, fill.g, fill.b, fill.a);
+        cairo_mask_surface(cr, icon, x, y);
+
+        cairo_restore(cr);
+    }
+
 	int pos_x, pos_y;
 	std::vector<Fact> args;
 };
@@ -436,9 +497,7 @@ public:
 
 	virtual void draw(cairo_t *cr) {
 		auto [x, y] = xy(cr);
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, x, y);
-		cairo_show_text(cr, text.c_str());
+		drawStrokeText(cr, x, y, text, CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
 	}
 protected:
 	std::string text;
@@ -451,9 +510,7 @@ public:
 
 	virtual void draw(cairo_t *cr) {
 		auto [x, y] = xy(cr);
-		cairo_set_source_surface(cr, icon, x, y - 20);
-		cairo_paint(cr);
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
+		drawStrokeIcon(cr, icon, x, y - 20, CairoColor{1.0, 1.0, 1.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 1);
 	}
 
 protected:
@@ -468,11 +525,8 @@ public:
 
 	virtual void draw(cairo_t *cr) {
 		auto [x, y] = xy(cr);
-		cairo_set_source_surface(cr, icon, x, y - 20);
-		cairo_paint(cr);
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, x + 40, y);
-		cairo_show_text(cr, text.c_str());
+		drawStrokeIcon(cr, icon, x, y - 20, CairoColor{1.0, 1.0, 1.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 1);
+		drawStrokeText(cr, x + 40, y, text, CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
 	}
 
 protected:
@@ -489,9 +543,7 @@ public:
 	virtual void draw(cairo_t *cr) {
 		auto [x, y] = xy(cr);
 		std::unique_ptr<std::string> msg = render_tpl();
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, x, y);
-		cairo_show_text(cr, msg->c_str());
+		drawStrokeText(cr, x, y, *msg, CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
 	}
 
 protected:
@@ -573,11 +625,8 @@ public:
 	virtual void draw(cairo_t *cr) {
 		auto [x, y] = xy(cr);
 		std::unique_ptr<std::string> msg = render_tpl();
-		cairo_set_source_surface(cr, icon, x, y - 20);
-		cairo_paint(cr);
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, x + 40, y);
-		cairo_show_text(cr, msg->c_str());
+		drawStrokeIcon(cr, icon, x, y - 20, CairoColor{1.0, 1.0, 1.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 1);
+		drawStrokeText(cr, x + 40, y, *msg, CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
 	}
 
 protected:
@@ -644,12 +693,8 @@ public:
 		double max = *std::max_element(stats.begin(), stats.end());
 
 		// legend
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, x + 2, y + 15);
-		cairo_show_text(cr, shorten(max).c_str());
-
-		cairo_move_to(cr, x + 2, y + h);
-		cairo_show_text(cr, shorten(min).c_str());
+		drawStrokeText(cr, x + 2, y + 15, shorten(max), CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
+		drawStrokeText(cr, x + 2, y + h, shorten(min), CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
 
 		// bars
 		cairo_set_source_rgba(cr, 200.0, 200.0, 200.0, 0.8);
@@ -809,13 +854,8 @@ public:
 	void draw(cairo_t *cr) {
 		if(args[0].isDefined() && args[0].getBoolValue()) {
 			auto [x, y] = xy(cr);
-			cairo_save(cr);
-			cairo_set_source_surface(cr, icon, x, y - 20);
-			cairo_paint(cr);
-			cairo_set_source_rgba(cr, 255.0, 0.0, 0.0, 1);
-			cairo_move_to(cr, x + 40, y);
-			cairo_show_text(cr, text.c_str());
-			cairo_restore(cr);
+			drawStrokeIcon(cr, icon, x, y - 20, CairoColor{1.0, 1.0, 1.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 1);
+			drawStrokeText(cr, x + 40, y, text, CairoColor{1.0, 0.0, 0.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 2.0);
 		}
 	}
 };
@@ -830,16 +870,10 @@ public:
 	void draw(cairo_t *cr) {
 		if(args[0].isDefined() && args[0].getBoolValue()) {
 			auto [x, y] = xy(cr);
-			cairo_save(cr);
-			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0); // active - pure white
-			cairo_mask_surface(cr, icon, x, y - 20);
-			cairo_restore(cr);
+			drawStrokeIcon(cr, icon, x, y - 20, CairoColor{1.0, 1.0, 1.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 1);
 		} else {
 			auto [x, y] = xy(cr);
-			cairo_save(cr);
-			cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 1.0); // inactive - gray
-			cairo_mask_surface(cr, icon, x, y - 20);
-			cairo_restore(cr);
+			drawStrokeIcon(cr, icon, x, y - 20, CairoColor{0.4, 0.4, 0.44, 1.0}, CairoColor{0.0, 0.0, 0.0, 0.4}, 1);
 		}
 	}
 };
@@ -957,9 +991,7 @@ public:
 		double lat = args[1].getIntValue() * 1.0e-7;
 		double lon = args[2].getIntValue() * 1.0e-7;
 		snprintf(buf, sizeof(buf), "%s Lat:%f, Lon:%f", fix_type.c_str(), lat, lon);
-		cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, x, y);
-		cairo_show_text(cr, buf);
+		drawStrokeText(cr, x + 40, y, std::string(buf), CairoColor{1,1,1,1}, CairoColor{0,0,0,1}, 2.0);
 	}
 };
 
@@ -998,7 +1030,7 @@ public:
 	ExternalSurfaceWidget(int pos_x, int pos_y, std::string shm_name ): Widget(pos_x, pos_y), shm_name(shm_name)  {};
 
 	virtual void init_shm(cairo_t *cr) {
-		SPDLOG_INFO("creating shm region {}", shm_name);
+		SPDLOG_INFO("Creating shm region {}", shm_name);
 
 		cairo_surface_t *target = cairo_get_target(cr);
 		int width = cairo_image_surface_get_width(target);
@@ -1054,7 +1086,7 @@ public:
 	}
 
 	~ExternalSurfaceWidget() {
-		SPDLOG_INFO("bye, bye, shm region {}", shm_name);
+		SPDLOG_INFO("Destroying shm region {}", shm_name);
 		if (shm_surface) {
 			cairo_surface_destroy(shm_surface);
 		}
@@ -1105,8 +1137,7 @@ public:
         if (!current_icon) return;
 
         auto [x, y] = xy(cr);
-        cairo_set_source_surface(cr, current_icon, x, y);
-        cairo_paint(cr);
+		drawStrokeIcon(cr, current_icon, x, y, CairoColor{1.0, 1.0, 1.0, 1.0}, CairoColor{0.0, 0.0, 0.0, 1.0}, 1);
     }
 
 private:
