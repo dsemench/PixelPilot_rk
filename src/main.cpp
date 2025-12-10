@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <inttypes.h>
@@ -36,7 +37,6 @@
 #include "spdlog/spdlog.h"
 
 extern "C" {
-#include "main.h"
 #include "drm.h"
 
 #include "mavlink/common/mavlink.h"
@@ -73,6 +73,58 @@ struct {
 		uint32_t handle;
 	} frame_to_drm[MAX_FRAMES];
 } mpi;
+
+enum AppOption {
+    OPT_SOCKET = 256,
+    OPT_CODEC,
+    OPT_DVR,
+    OPT_DVR_START,
+    OPT_DVR_TEMPLATE,
+    OPT_DVR_SEQUENCED_FILES,
+    OPT_DVR_FRAMERATE,
+    OPT_DVR_FMP4,
+    OPT_LOG_LEVEL,
+    OPT_MAVLINK_PORT,
+    OPT_MAVLINK_DVR_ON_ARM,
+    OPT_OSD,
+    OPT_OSD_CONFIG,
+    OPT_OSD_REFRESH,
+    OPT_OSD_ELEMENTS,
+    OPT_OSD_TELEM_LVL,
+    OPT_OSD_CUSTOM_MESSAGE,
+    OPT_SCREEN_MODE,
+    OPT_DISABLE_VSYNC,
+    OPT_SCREEN_MODE_LIST,
+    OPT_WFB_API_PORT,
+    OPT_VERSION
+};
+
+static const struct option pixelpilot_long_options[] = {
+    {"socket",              required_argument, 0, OPT_SOCKET},
+    {"codec",               required_argument, 0, OPT_CODEC},
+    {"dvr",                 required_argument, 0, OPT_DVR},
+    {"dvr-start",           no_argument,       0, OPT_DVR_START},
+    {"dvr-template",        required_argument, 0, OPT_DVR_TEMPLATE},
+    {"dvr-sequenced-files", no_argument,       0, OPT_DVR_SEQUENCED_FILES},
+    {"dvr-framerate",       required_argument, 0, OPT_DVR_FRAMERATE},
+    {"dvr-fmp4",            no_argument,       0, OPT_DVR_FMP4},
+    {"log-level",           required_argument, 0, OPT_LOG_LEVEL},
+    {"mavlink-port",        required_argument, 0, OPT_MAVLINK_PORT},
+    {"mavlink-dvr-on-arm",  no_argument,       0, OPT_MAVLINK_DVR_ON_ARM},
+    {"osd",                 no_argument,       0, OPT_OSD},
+    {"osd-config",          required_argument, 0, OPT_OSD_CONFIG},
+    {"osd-refresh",         required_argument, 0, OPT_OSD_REFRESH},
+    {"osd-elements",        required_argument, 0, OPT_OSD_ELEMENTS},
+    {"osd-telem-lvl",       required_argument, 0, OPT_OSD_TELEM_LVL},
+    {"osd-custom-message",  no_argument,       0, OPT_OSD_CUSTOM_MESSAGE},
+    {"screen-mode",         required_argument, 0, OPT_SCREEN_MODE},
+    {"disable-vsync",       no_argument,       0, OPT_DISABLE_VSYNC},
+    {"screen-mode-list",    no_argument,       0, OPT_SCREEN_MODE_LIST},
+    {"wfb-api-port",        required_argument, 0, OPT_WFB_API_PORT},
+    {"version",             no_argument,       0, OPT_VERSION},
+    {"help",                no_argument,       0, 'h'},
+    {0, 0, 0, 0}
+};
 
 struct timespec frame_stats[1000];
 
@@ -681,7 +733,7 @@ void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, con
 
 void printHelp() {
   printf(
-    "\n\t\tPixelPilot FPV Decoder for Rockchip (%d.%d)\n"
+    "PixelPilot FPV Decoder for Rockchip (%d.%d)\n"
     "\n"
     "  Usage:\n"
     "    pixelpilot [Arguments]\n"
@@ -723,7 +775,7 @@ void printHelp() {
     "\n"
     "    --screen-mode <mode>   - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
-	"    --disable-vsync         - Disable VSYNC commits\n"
+	"    --disable-vsync        - Disable VSYNC commits\n"
 	"\n"
     "    --screen-mode-list     - Print the list of supported screen modes and exit.\n"
     "\n"
@@ -765,144 +817,181 @@ int main(int argc, char **argv)
 	uint8_t* nal_buffer = NULL;
 
 	// Load console arguments
-	__BeginParseConsoleArguments__(printHelp) 
-	
-	__OnArgument("-p") {
-		listen_port = atoi(__ArgValue);
-		continue;
-	}
-	
-	__OnArgument("--socket") {
-		unix_socket = const_cast<char*>(__ArgValue);
-		continue;
-	}
+	int opt;
+	int option_index = 0;
 
-	__OnArgument("--codec") {
-		char * codec_str = const_cast<char*>(__ArgValue);
-		spdlog::warn("--codec parameter is removed.");
-		continue;
-	}
+	while ((opt = getopt_long(argc, argv, "hp:", pixelpilot_long_options, &option_index)) != -1) {
+    	switch (opt) {
 
-	__OnArgument("--dvr") {
-		dvr_template = const_cast<char*>(__ArgValue);
-		dvr_autostart = 1;
-		fprintf(stderr, "--dvr is deprecated. Use --dvr-template and --dvr-start instead.\n");
-		continue;
-	}
+    	case 'h':
+        	printHelp();
+        	return 0;
 
-	__OnArgument("--dvr-start") {
-		dvr_autostart = 1;
-		continue;
-	}
+    	case 'p': { // -p <port>
+        	char *end = nullptr;
+        	long v = strtol(optarg, &end, 10);
+        	if (*end != '\0' || v <= 0 || v > 65535) {
+            	spdlog::error("-p: invalid port '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	listen_port = static_cast<uint16_t>(v);
+        	break;
+    	}
 
-	__OnArgument("--dvr-template") {
-		dvr_template = const_cast<char*>(__ArgValue);
-		continue;
-	}
+    	case OPT_SOCKET: // --socket
+        	unix_socket = optarg;
+        	break;
 
-	__OnArgument("--dvr-sequenced-files") {
-		dvr_filenames_with_sequence = true;
-		continue;
-	}
+    	case OPT_CODEC: // --codec (deprecated)
+        	spdlog::warn("--codec parameter is removed");
+        	break;
 
-	__OnArgument("--dvr-framerate") {
-		video_framerate = atoi(__ArgValue);
-		continue;
-	}
+    	case OPT_DVR: // --dvr (deprecated)
+        	dvr_template = optarg;
+        	dvr_autostart = 1;
+        	spdlog::warn("--dvr is deprecated. Use --dvr-template and --dvr-start");
+        	break;
 
-	__OnArgument("--dvr-fmp4") {
-		mp4_fragmentation_mode = 1;
-		continue;
-	}
+    	case OPT_DVR_START: // --dvr-start
+        	dvr_autostart = 1;
+        	break;
 
-	__OnArgument("--log-level") {
-		std::string log_l = std::string(__ArgValue);
-		if (log_l == "info") {
-			log_level = spdlog::level::info;
-		} else if (log_l == "debug"){
-			log_level = spdlog::level::debug;
-			spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
-		} else if (log_l == "warn"){
-			log_level = spdlog::level::warn;
-		} else if (log_l == "error"){
-			log_level = spdlog::level::err;
-		} else {
-			fprintf(stderr, "invalid log level %s\n", log_l.c_str());
-			printHelp();
-			return -1;
-		}
-		continue;
-	}
+    	case OPT_DVR_TEMPLATE: // --dvr-template
+        	dvr_template = optarg;
+        	break;
 
-	__OnArgument("--mavlink-port") {
-		mavlink_port = atoi(__ArgValue);
-		continue;
-	}
+    	case OPT_DVR_SEQUENCED_FILES: // --dvr-sequenced-files
+        	dvr_filenames_with_sequence = true;
+        	break;
 
-	__OnArgument("--mavlink-dvr-on-arm") {
-		mavlink_dvr_on_arm = true;
-		continue;
-	}
+    	case OPT_DVR_FRAMERATE: { // --dvr-framerate
+        	char *end = nullptr;
+        	long v = strtol(optarg, &end, 10);
+        	if (*end != '\0' || v <= 0 || v > 120) {
+            	spdlog::error("--dvr-framerate: invalid value '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	video_framerate = static_cast<int>(v);
+        	break;
+    	}
 
-	__OnArgument("--osd") {
-		enable_osd = 1;
-		mavlink_thread = 1;
-		continue;
-	}
-	__OnArgument("--osd-config") {
-		osd_config_path = std::string(__ArgValue);
-		continue;
-	}
-	__OnArgument("--osd-refresh") {
-		refresh_frequency_ms = atoi(__ArgValue);
-		continue;
-	}
+    	case OPT_DVR_FMP4: // --dvr-fmp4
+        	mp4_fragmentation_mode = 1;
+        	break;
 
-	__OnArgument("--osd-elements") {
-		spdlog::warn("--osd-elements parameter is removed.");
-		char* elements = const_cast<char*> (__ArgValue);
-		continue;
-	}
+    	case OPT_LOG_LEVEL: { // --log-level
+        	std::string log_l(optarg);
+        	if (log_l == "info") {
+            	log_level = spdlog::level::info;
+        	} else if (log_l == "debug") {
+            	log_level = spdlog::level::debug;
+            	spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
+        	} else if (log_l == "warn") {
+            	log_level = spdlog::level::warn;
+        	} else if (log_l == "error") {
+            	log_level = spdlog::level::err;
+        	} else {
+            	spdlog::error("invalid log level '{}'", log_l);
+            	printHelp();
+            	return -1;
+        	}
+        	break;
+   		}
 
-	__OnArgument("--osd-telem-lvl") {
-		spdlog::warn("--osd-telem-lvl parameter is removed.");
-		continue;
-	}
+    	case OPT_MAVLINK_PORT: { // --mavlink-port
+        	char *end = nullptr;
+        	long v = strtol(optarg, &end, 10);
+        	if (*end != '\0' || v <= 0 || v > 65535) {
+            	spdlog::error("--mavlink-port: invalid port '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	mavlink_port = static_cast<int>(v);
+        	break;
+    	}
 
-	__OnArgument("--osd-custom-message") {
-		osd_custom_message = true;
-		continue;
-	}
+    	case OPT_MAVLINK_DVR_ON_ARM: // --mavlink-dvr-on-arm
+        	mavlink_dvr_on_arm = true;
+        	break;
 
-	__OnArgument("--screen-mode") {
-		char* mode = const_cast<char*>(__ArgValue);
-		mode_width = atoi(strtok(mode, "x"));
-		mode_height = atoi(strtok(NULL, "@"));
-		mode_vrefresh = atoi(strtok(NULL, "@"));
-		continue;
-	}
+    	case OPT_OSD: // --osd
+        	enable_osd = 1;
+        	mavlink_thread = 1;
+        	break;
 
-	__OnArgument("--disable-vsync") {
-		disable_vsync = true;
-		continue;
-	}
+    	case OPT_OSD_CONFIG: // --osd-config
+        	osd_config_path = std::string(optarg);
+        	break;
 
-	__OnArgument("--screen-mode-list") {
-		print_modelist = 1;
-		continue;
-	}
+    	case OPT_OSD_REFRESH: { // --osd-refresh
+        	char *end = nullptr;
+        	long v = strtol(optarg, &end, 10);
+        	if (*end != '\0' || v <= 0 || v > 2000) {
+            	spdlog::error("--osd-refresh: invalid value '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	refresh_frequency_ms = static_cast<uint32_t>(v);
+        	break;
+    	}
 
-	__OnArgument("--wfb-api-port") {
-		wfb_port = atoi(__ArgValue);
-		continue;
-	}
+    	case OPT_OSD_ELEMENTS: // --osd-elements (deprecated)
+        	spdlog::warn("--osd-elements parameter is removed");
+        	break;
 
-	__OnArgument("--version") {
-		printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
-		return 0;
-	}
+    	case OPT_OSD_TELEM_LVL: // --osd-telem-lvl (deprecated)
+        	spdlog::warn("--osd-telem-lvl parameter is removed");
+        	break;
 
-	__EndParseConsoleArguments__
+    	case OPT_OSD_CUSTOM_MESSAGE: // --osd-custom-message
+        	osd_custom_message = true;
+        	break;
+
+    	case OPT_SCREEN_MODE: { // --screen-mode
+        	int w = 0, h = 0, r = 0;
+        	if (sscanf(optarg, "%dx%d@%d", &w, &h, &r) != 3 || w <= 0 || h <= 0 || r <= 0) {
+            	spdlog::error("invalid --screen-mode '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	mode_width    = static_cast<uint16_t>(w);
+        	mode_height   = static_cast<uint16_t>(h);
+        	mode_vrefresh = static_cast<uint32_t>(r);
+        	break;
+    	}
+
+    	case OPT_DISABLE_VSYNC: // --disable-vsync
+        	disable_vsync = true;
+        	break;
+
+    	case OPT_SCREEN_MODE_LIST: // --screen-mode-list
+        	print_modelist = 1;
+        	break;
+
+    	case OPT_WFB_API_PORT: { // --wfb-api-port
+        	char *end = nullptr;
+        	long v = strtol(optarg, &end, 10);
+        	if (*end != '\0' || v < 0 || v > 65535) {
+            	spdlog::error("--wfb-api-port: invalid port '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	wfb_port = static_cast<uint16_t>(v);
+        	break;
+    	}
+
+    	case OPT_VERSION: // --version
+        	printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
+        	return 0;
+
+    	case '?':
+    	default:
+    		printHelp();
+        	return -1;
+    	}
+	}
 
 	spdlog::set_level(log_level);
 
