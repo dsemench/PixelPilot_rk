@@ -622,14 +622,6 @@ void cleanup_drm()
 	spdlog::info("DRM cleanup done");
 }
 
-void restart_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
-{
-	cleanup_drm();
-	setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
-
-	spdlog::info("DRM restart done");
-}
-
 void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
 {
 	codec_changed.store(true);
@@ -785,6 +777,11 @@ void printHelp() {
     "    --version              - Show program version\n"
     "\n", APP_VERSION_MAJOR, APP_VERSION_MINOR
   );
+}
+
+static void printVersion()
+{
+    printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
 }
 
 // main
@@ -983,7 +980,7 @@ int main(int argc, char **argv)
     	}
 
     	case OPT_VERSION: // --version
-        	printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
+        	printVersion();
         	return 0;
 
     	case '?':
@@ -1000,8 +997,7 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
-	printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
-
+	printVersion();
 	spdlog::info("disable_vsync: {}", disable_vsync);
 
 	if (enable_osd == 0 ) {
@@ -1010,7 +1006,18 @@ int main(int argc, char **argv)
 
     ////////////////////////////////////////////// DRM SETUP
 
-	setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
+	int drm_ret = setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
+
+	if (print_modelist) {
+        remove(pidFilePath.c_str());
+        return (drm_ret < 0) ? drm_ret : 0;
+    }
+
+    if (drm_ret <= 0) {
+        spdlog::error("Failed to initialize DRM (code {})", drm_ret);
+        remove(pidFilePath.c_str());
+        return drm_ret;
+    }
 
 	////////////////////////////////////////////// SIGNAL SETUP
 
