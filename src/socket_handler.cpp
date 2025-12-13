@@ -97,7 +97,7 @@ bool SocketHandler::init_connection()
 {
     if (socket_connected)
     {
-        spdlog::info("[ SocketHandler ] Connection already is open");
+        spdlog::info("[ SocketHandler ] Connection is already open");
         return true;
     }
 
@@ -109,7 +109,7 @@ bool SocketHandler::init_connection()
     }
 
     if (!socket_connected) {
-        spdlog::error("[ SocketHandler ] Failed to initialyze connection");
+        spdlog::error("[ SocketHandler ] Failed to initialize connection");
     }
 
     return socket_connected;
