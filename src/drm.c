@@ -428,7 +428,7 @@ int select_best_mode(drmModeConnector *conn) {
         
         uint32_t refresh = mode->vrefresh;
         
-        if (refresh % 30 != 0 || mode->hdisplay > max_width || mode->vdisplay > max_height) {
+        if (refresh % 60 != 0 || mode->hdisplay > max_width || mode->vdisplay > max_height) {
             continue;
         }
         
