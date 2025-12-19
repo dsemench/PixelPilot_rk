@@ -23,7 +23,6 @@ set(SOURCE_FILES
         src/mavlink.h
         src/mavlink.c
         src/main.cpp
-        src/main.h
         src/wfbcli.hpp
         src/wfbcli.cpp
         src/scheduling_helper.hpp
