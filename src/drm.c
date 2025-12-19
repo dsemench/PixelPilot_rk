@@ -414,27 +414,34 @@ void modeset_output_destroy(int fd, struct modeset_output *out)
 	free(out);
 }
 
-int select_best_mode(drmModeConnector *conn) {
+int select_best_mode(drmModeConnector *conn, uint32_t desired_refresh) {
     const uint32_t max_width = 1920;
     const uint32_t max_height = 1080;
-    
+
     int best_index = -1;
     uint32_t best_width = 0;
     uint32_t best_height = 0;
     uint32_t best_refresh = 0;
-    
+
     for (int i = 0; i < conn->count_modes; i++) {
         drmModeModeInfo *mode = &conn->modes[i];
         
         uint32_t refresh = mode->vrefresh;
         
-        if (refresh % 60 != 0 || mode->hdisplay > max_width || mode->vdisplay > max_height) {
+        if (mode->hdisplay > max_width || mode->vdisplay > max_height) {
             continue;
         }
-        
+
+        if (desired_refresh == 0 && refresh % 60 != 0) {
+            continue;
+        }
+        else if (desired_refresh != 0 && refresh != desired_refresh) {
+            continue;
+        }
+
         uint32_t pixels = mode->hdisplay * mode->vdisplay;
         uint32_t best_pixels = best_width * best_height;
-        
+
         if (pixels > best_pixels || (pixels == best_pixels && refresh > best_refresh)) {
             best_index = i;
             best_width = mode->hdisplay;
@@ -442,11 +449,11 @@ int select_best_mode(drmModeConnector *conn) {
             best_refresh = refresh;
         }
     }
-    
+
     return best_index;
 }
 
-struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
+struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh, uint32_t target_frame_rate)
 {
 	int ret;
 	struct modeset_output *out;
@@ -494,16 +501,25 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 			fc = preferred_fc;
 		}
 		printf( "Using screen mode %dx%d@%d\n",conn->modes[fc].hdisplay, conn->modes[fc].vdisplay , conn->modes[fc].vrefresh );
-	}
-	else if (mode_width == 0 && mode_height == 0 && mode_vrefresh == 0) {
-		int idx = 0;
-		idx = select_best_mode(conn);
-		if (idx >= 0) {
-	        printf("Selected mode index %d : %dx%d@%dHz\n", 
-               idx, conn->modes[idx].hdisplay, conn->modes[idx].vdisplay , conn->modes[idx].vrefresh);
-			fc = idx;
-    	}
-	}
+    }
+    else if (target_frame_rate > 0) {
+        int idx = 0;
+        idx = select_best_mode(conn, target_frame_rate);
+        if (idx >= 0) {
+            printf("Desired target frame rate %dHz. Selected mode index %d : %dx%d@%dHz\n", 
+               target_frame_rate, idx, conn->modes[idx].hdisplay, conn->modes[idx].vdisplay , conn->modes[idx].vrefresh);
+            fc = idx;
+        }
+    }
+    else if (mode_width == 0 && mode_height == 0 && mode_vrefresh == 0) {
+        int idx = 0;
+        idx = select_best_mode(conn, 0);
+        if (idx >= 0) {
+            printf("Selected mode index %d : %dx%d@%dHz\n", 
+                  idx, conn->modes[idx].hdisplay, conn->modes[idx].vdisplay , conn->modes[idx].vrefresh);
+            fc = idx;
+        }
+    }
 	memcpy(&out->mode, &conn->modes[fc], sizeof(out->mode));
 	if (drmModeCreatePropertyBlob(fd, &out->mode, sizeof(out->mode), &out->mode_blob_id) != 0) {
 		fprintf(stderr, "couldn't create a blob property\n");
@@ -601,7 +617,7 @@ void *modeset_print_modes(int fd)
 
 }
 
-struct modeset_output *modeset_prepare(int fd, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
+struct modeset_output *modeset_prepare(int fd, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh, uint32_t target_frame_rate)
 {
 	drmModeRes *res;
 	drmModeConnector *conn;
@@ -623,7 +639,7 @@ struct modeset_output *modeset_prepare(int fd, uint16_t mode_width, uint16_t mod
 			continue;
 		}
 
-		out = modeset_output_create(fd, res, conn, mode_width, mode_height, mode_vrefresh);
+		out = modeset_output_create(fd, res, conn, mode_width, mode_height, mode_vrefresh, target_frame_rate);
 		drmModeFreeConnector(conn);
 		if (out) {
 			drmModeFreeResources(res);

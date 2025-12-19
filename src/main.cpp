@@ -93,6 +93,7 @@ enum AppOption {
     OPT_OSD_TELEM_LVL,
     OPT_OSD_CUSTOM_MESSAGE,
     OPT_SCREEN_MODE,
+	OPT_TARGET_FRAME_RATE,
     OPT_DISABLE_VSYNC,
     OPT_SCREEN_MODE_LIST,
     OPT_WFB_API_PORT,
@@ -118,6 +119,7 @@ static const struct option pixelpilot_long_options[] = {
     {"osd-telem-lvl",       required_argument, 0, OPT_OSD_TELEM_LVL},
     {"osd-custom-message",  no_argument,       0, OPT_OSD_CUSTOM_MESSAGE},
     {"screen-mode",         required_argument, 0, OPT_SCREEN_MODE},
+    {"target-frame-rate",   required_argument, 0, OPT_TARGET_FRAME_RATE},
     {"disable-vsync",       no_argument,       0, OPT_DISABLE_VSYNC},
     {"screen-mode-list",    no_argument,       0, OPT_SCREEN_MODE_LIST},
     {"wfb-api-port",        required_argument, 0, OPT_WFB_API_PORT},
@@ -579,7 +581,7 @@ void cleanup_mpi(MppPacket &packet, uint8_t* nal_buffer)
 	spdlog::info("MPI cleanup done");
 }
 
-int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
+int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh, uint32_t target_frame_rate)
 {
 	int ret = modeset_open(&drm_fd, "/dev/dri/card0");
 	if (ret < 0) {
@@ -592,7 +594,7 @@ int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uin
 		return 0;
 	}
 
-	output_list = modeset_prepare(drm_fd, mode_width, mode_height, mode_vrefresh);
+	output_list = modeset_prepare(drm_fd, mode_width, mode_height, mode_vrefresh, target_frame_rate);
 	if (!output_list) {
 		fprintf(stderr,
 				"cannot initialize display. Is display connected? Is --screen-mode correct?\n");
@@ -802,6 +804,7 @@ int main(int argc, char **argv)
 	uint16_t mode_width = 0;
 	uint16_t mode_height = 0;
 	uint32_t mode_vrefresh = 0;
+	uint32_t target_frame_rate = 0;
 	std::string osd_config_path;
 	auto log_level = spdlog::level::info;
 	
@@ -959,7 +962,19 @@ int main(int argc, char **argv)
         	break;
     	}
 
-    	case OPT_DISABLE_VSYNC: // --disable-vsync
+    	case OPT_TARGET_FRAME_RATE: { // --target-frame-rate
+        	char *end = nullptr;
+        	long v = strtol(optarg, &end, 10);
+        	if (*end != '\0' || v < 30 || v > 120) {
+            	spdlog::error("invalid --target-frame-rate '{}'", optarg);
+            	printHelp();
+            	return -1;
+        	}
+        	target_frame_rate = static_cast<uint32_t>(v);
+        	break;
+    	}
+
+		case OPT_DISABLE_VSYNC: // --disable-vsync
         	disable_vsync = true;
         	break;
 
@@ -1006,7 +1021,7 @@ int main(int argc, char **argv)
 
     ////////////////////////////////////////////// DRM SETUP
 
-	int drm_ret = setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh);
+	int drm_ret = setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh, target_frame_rate);
 
 	if (print_modelist) {
         remove(pidFilePath.c_str());
