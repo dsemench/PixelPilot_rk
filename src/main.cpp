@@ -23,7 +23,6 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/mman.h>
@@ -65,6 +64,7 @@ struct {
 	MppApi		  *mpi;
 	
 	struct timespec first_frame_ts;
+	uint8_t 		*nal_buffer;
 
 	MppBufferGroup	frm_grp;
 	struct {
@@ -452,7 +452,7 @@ void sigusr2_handler(int signum) {
 }
 
 int decoder_stalled_count=0;
-bool feed_packet_to_decoder(MppPacket* packet, void* data_p, int data_len){
+bool feed_packet_to_decoder(MppPacket packet, void* data_p, int data_len){
     mpp_packet_set_data(packet, data_p);
     mpp_packet_set_size(packet, data_len);
     mpp_packet_set_pos(packet, data_p);
@@ -523,18 +523,20 @@ void set_mpp_decoding_parameters(MppApi* mpi, MppCtx ctx) {
     set_control_verbose(mpi,ctx,MPP_DEC_SET_PARSER_FAST_MODE,fast_mode);
 }
 
-void setup_mpi(MppPacket &packet, uint8_t* nal_buffer)
+void setup_mpi(MppPacket &packet)
 {
 	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC;
-	if(codec==VideoCodec::H264) {
+	if(codec == VideoCodec::H264) {
 		mpp_type = MPP_VIDEO_CodingAVC;
 	}
 	int ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
 	assert(!ret);
 
-	nal_buffer = (uint8_t*)malloc(1024 * 1024);
-	assert(nal_buffer);
-	ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
+	if (!mpi.nal_buffer) {
+        mpi.nal_buffer = (uint8_t*)malloc(READ_BUF_SIZE);
+        assert(mpi.nal_buffer);
+    }
+	ret = mpp_packet_init(&packet, mpi.nal_buffer, READ_BUF_SIZE);
 	assert(!ret);
 
 	ret = mpp_create(&mpi.ctx, &mpi.mpi);
@@ -550,7 +552,7 @@ void setup_mpi(MppPacket &packet, uint8_t* nal_buffer)
 	spdlog::info("MPI setup done");
 }
 
-void cleanup_mpi(MppPacket &packet, uint8_t* nal_buffer)
+void cleanup_mpi(MppPacket &packet)
 {
 	int i;
 
@@ -576,7 +578,9 @@ void cleanup_mpi(MppPacket &packet, uint8_t* nal_buffer)
 		
 	mpp_packet_deinit(&packet);
 	mpp_destroy(mpi.ctx);
-	free(nal_buffer);
+
+	free(mpi.nal_buffer);
+	mpi.nal_buffer = NULL;
 
 	spdlog::info("MPI cleanup done");
 }
@@ -601,7 +605,6 @@ int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uin
 		return -2;
 	}
 	return 1;
-	spdlog::info("DRM setup done");
 }
 
 void cleanup_drm()
@@ -624,7 +627,7 @@ void cleanup_drm()
 	spdlog::info("DRM cleanup done");
 }
 
-void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
+void restart_mpi(MppPacket &packet, VideoCodec new_codec)
 {
 	codec_changed.store(true);
 	spdlog::info("Current codec: {} new codec: {}", codec_type_name(codec), codec_type_name(new_codec));
@@ -639,8 +642,8 @@ void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
 	ret = pthread_mutex_unlock(&video_mutex);
 	assert(!ret);
 
-	cleanup_mpi(packet, nal_buffer);
-	setup_mpi(packet, nal_buffer);
+	cleanup_mpi(packet);
+	setup_mpi(packet);
 	codec_changed.store(false);
 
 
@@ -651,7 +654,7 @@ void restart_mpi(MppPacket &packet, uint8_t* nal_buffer, VideoCodec new_codec)
 }
 
 uint64_t first_frame_ms=0;
-void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, const char* sock) {
+void read_video_stream(MppPacket &packet, int udp_port, const char* sock) {
 	std::unique_ptr<RtpReceiver> rtp_receiver;
 	if (sock) {
 		rtp_receiver = std::make_unique<RtpReceiver>(sock);
@@ -662,19 +665,13 @@ void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, con
 	rtp_receiver->init();
 	codec = rtp_receiver->get_video_codec();
 
-	setup_mpi(packet, nal_buffer);
+	setup_mpi(packet);
 	
 	codec_detected.store(true);
 
 	long long bytes_received = 0; 
 	uint64_t period_start=0;
 	auto cb=[&packet, &rtp_receiver, /*&decoder_stalled_count,*/ &bytes_received, &period_start](void *data, int size, bool is_codec_changed){
-        // Let pull thread run at quite high priority
-        static bool first= false;
-        if(first){
-            SchedulingHelper::set_thread_params_max_realtime("DisplayThread",SchedulingHelper::PRIORITY_REALTIME_LOW);
-            first= false;
-        }
 		if (is_codec_changed)
 		{
 			codec_changed.store(true);
@@ -682,7 +679,7 @@ void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, con
 		bytes_received += size;
 		uint64_t now = get_time_ms();
 		osd_publish_uint_fact("rtp.received_bytes", NULL, 0, size);
-        feed_packet_to_decoder((void **)packet,data,size);
+        feed_packet_to_decoder(packet, data, size);
         if (dvr_enabled && dvr != NULL && codec == VideoCodec::H265) {
 			auto frame = std::make_shared<std::vector<uint8_t>>(size);
 			std::memcpy(frame->data(), data, size);
@@ -700,13 +697,12 @@ void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, con
 		{
 			rtp_receiver->stop_receiving();
 			mpp_packet_set_eos(packet);
-			//mpp_packet_set_pos(packet, nal_buffer);
 			mpp_packet_set_length(packet, 0);
 			int ret=0;
 			while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
 				usleep(10000);
 			}
-			restart_mpi(packet, nal_buffer, rtp_receiver->get_video_codec());
+			restart_mpi(packet, rtp_receiver->get_video_codec());
 			rtp_receiver->start_receiving(cb);
 		}
 		else {
@@ -716,7 +712,6 @@ void read_video_stream(MppPacket &packet, uint8_t* nal_buffer, int udp_port, con
 	rtp_receiver->stop_receiving();
     spdlog::info("Feeding eos");
     mpp_packet_set_eos(packet);
-    //mpp_packet_set_pos(packet, nal_buffer);
     mpp_packet_set_length(packet, 0);
     int ret=0;
     while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
@@ -769,7 +764,7 @@ void printHelp() {
     "\n"
     "    --screen-mode <mode>      - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
-	"    --target-frame-rate <fps> - Target DRM refresh rate for mode selection (30..120)\n"
+	"    --target-frame-rate <fps> - Target DRM refresh rate for mode selection (30..120), ex: 60\n"
 	"                                Makes DRM choose the highest available resolution at the requested FPS\n"
 	"                                For optimal smoothness, use a value equal to or divisible by the video FPS.\n"
     "\n"
@@ -818,7 +813,6 @@ int main(int argc, char **argv)
     pidFile.close();
 
 	MppPacket packet;
-	uint8_t* nal_buffer = NULL;
 
 	// Load console arguments
 	int opt;
@@ -1100,7 +1094,7 @@ int main(int argc, char **argv)
 
 	////////////////////////////////////////////// MAIN LOOP
 
-	read_video_stream(packet, nal_buffer, listen_port, unix_socket);
+	read_video_stream(packet, listen_port, unix_socket);
 
     ////////////////////////////////////////////// THREAD CLEANUP
 
@@ -1139,7 +1133,7 @@ int main(int argc, char **argv)
 
 	////////////////////////////////////////////// MPI CLEANUP
 
-	cleanup_mpi(packet, nal_buffer);
+	cleanup_mpi(packet);
 
 	////////////////////////////////////////////// DRM CLEANUP
 

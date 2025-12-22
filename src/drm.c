@@ -506,7 +506,7 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
         int idx = 0;
         idx = select_best_mode(conn, target_frame_rate);
         if (idx >= 0) {
-            printf("Desired target frame rate %dHz. Selected mode index %d : %dx%d@%dHz\n", 
+            printf("Desired target refresh rate %d Hz. Selected mode index %d : %dx%d@%d\n", 
                target_frame_rate, idx, conn->modes[idx].hdisplay, conn->modes[idx].vdisplay , conn->modes[idx].vrefresh);
             fc = idx;
         }
@@ -515,7 +515,7 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
         int idx = 0;
         idx = select_best_mode(conn, 0);
         if (idx >= 0) {
-            printf("Selected mode index %d : %dx%d@%dHz\n", 
+            printf("Selected mode index %d : %dx%d@%d\n", 
                   idx, conn->modes[idx].hdisplay, conn->modes[idx].vdisplay , conn->modes[idx].vrefresh);
             fc = idx;
         }
