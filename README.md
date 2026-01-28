@@ -11,42 +11,36 @@ It also displays a simple cairo based OSD that shows the bandwidth, decoding lat
 Current version of the project mainely adapted for embedded platforms.
 
 This project is based on a unique frozen development [FPVue_rk](https://github.com/gehee/FPVue_rk) by [Gee He](https://github.com/gehee) and
-it was forked from [OpenIPC](https://github.com/openipc) project.
+it was forked from [OpenIPC](https://github.com/OpenIPC/PixelPilot_rk) project.
 
 Tested on RK3566 (Radxa Zero 3W) and RK3588s (Orange Pi 5).
 
 ## Compilation
 
-Build on the Rockchip linux system directly.
+Build with CMake with pkg-config.
 
-## Install dependencies
+## Build dependencies
 
-- drm, cairo, mpp, logging, json, msgpack
-
-```
-sudo apt install libdrm-dev libcairo-dev librockchip-mpp-dev libspdlog-dev nlohmann-json3-dev libmsgpack-dev
-```
+- drm, cairo, rockchip-mpp, spdlog, nlohmann-json, msgpack
 
 ## Build Instructions
 
-The project can be build using cmake with pkgconfig in specific toolchain.
+The project can be built using CMake with pkg-config and a specific toolchain.
 
-Build and run application in production environment:
+Build application in production environment:
 
 ```
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
-./pixelpilot
 ```
 
-Build and run application for debugging purposes:
+Build application for debugging purposes:
 
 ```
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
-./pixelpilot --osd
 ```
 
 ## Usage
@@ -206,7 +200,7 @@ Specific widgets expect quite concrete facts as input:
 
 ## The way it works
 
-It uses `rtp`library (https://github.com/ireader/media-server.git) to read the RTP media stream from video UDP.
+It uses `rtp` library (https://github.com/ireader/media-server.git) to read the RTP media stream from UDP or Unix domain socket.
 It uses `mpp` library to decode MPEG frames using Rockchip hardware decoder.
 It uses [Direct Rendering Manager (DRM)](https://en.wikipedia.org/wiki/Direct_Rendering_Manager) to
 display video on the screen, see `drm.c`.
