@@ -116,6 +116,7 @@ public:
 	Fact(FactMeta meta, ulong val): meta(meta), value(val), type(T_UINT) {};
 	Fact(FactMeta meta, double val): meta(meta), value(val), type(T_DOUBLE) {};
 	Fact(FactMeta meta, std::string val): meta(meta), value(val), type(T_STRING) {};
+	Fact(FactMeta meta): meta(meta), type(T_UNDEF) {};
 
 	bool isDefined() {
 		return type != T_UNDEF;
@@ -567,7 +568,7 @@ protected:
 				at_placeholder = false;
 				fact = &args[fact_i];
 				if (!fact->isDefined()) {
-					msg->push_back('?');
+					msg->push_back('-');
 					fact_i++;
 					continue;
 				}
@@ -602,7 +603,7 @@ protected:
 					}
 				default:
 					{
-						msg->push_back('?');
+						msg->push_back('-');
 					}
 				}
 				fact_i++;
@@ -1641,6 +1642,13 @@ void osd_add_str_fact(void *batch, char const *name, osd_tag *tags, int n_tags, 
 	facts->push_back(Fact(FactMeta(std::string(name), fact_tags), std::string(value)));
 };
 
+void osd_add_clear_fact(void *batch, char const *name, osd_tag *tags, int n_tags) {
+	std::vector<Fact> *facts = static_cast<std::vector<Fact> *>(batch);
+	FactTags fact_tags;
+	mk_tags(tags, n_tags, &fact_tags);
+	facts->push_back(Fact(FactMeta(std::string(name), fact_tags)));
+}
+
 
 // Individual APIs
 
@@ -1673,6 +1681,12 @@ void osd_publish_str_fact(char const *name, osd_tag *tags, int n_tags, const cha
 	mk_tags(tags, n_tags, &fact_tags);
 	publish(Fact(FactMeta(std::string(name), fact_tags), std::string(value)));
 };
+
+void osd_clear_fact(char const *name, osd_tag *tags, int n_tags) {
+	FactTags fact_tags;
+	mk_tags(tags, n_tags, &fact_tags);
+	publish(Fact(FactMeta(std::string(name), fact_tags)));
+}
 
 #ifdef __cplusplus
 }

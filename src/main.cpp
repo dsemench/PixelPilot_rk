@@ -395,11 +395,16 @@ void *__DISPLAY_THREAD__(void *param)
 			assert(ret>0);
 		}
 		drmModeAtomicCommit(drm_fd, output_list->video_request, flags, NULL);
-		ret = pthread_mutex_unlock(&osd_mutex);
-		assert(!ret);
-		osd_publish_uint_fact("video.displayed_frame", NULL, 0, 1);
-		uint64_t decode_and_handover_display_ms=get_time_ms()-decoding_pts;
-		osd_publish_uint_fact("video.decode_and_handover_ms", NULL, 0, decode_and_handover_display_ms);
+
+        if (enable_osd) {
+            ret = pthread_mutex_unlock(&osd_mutex);
+            assert(!ret);
+        }
+        if (fb_id != 0) {
+            osd_publish_uint_fact("video.displayed_frame", NULL, 0, 1);
+            uint64_t decode_and_handover_display_ms = get_time_ms() - decoding_pts;
+            osd_publish_uint_fact("video.decode_and_handover_ms", NULL, 0, decode_and_handover_display_ms);
+        }
 	}
 end:	
 	spdlog::info("Display thread done");
