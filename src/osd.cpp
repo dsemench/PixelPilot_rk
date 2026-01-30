@@ -889,6 +889,11 @@ public:
 
 	virtual void setFact(uint idx, Fact fact) {
 		if (idx == 0) {
+
+            if (!fact.isDefined()) {
+                args[idx] = Fact();
+                return;
+            }
 			// replace the value with its increment rate per-second
 			ulong num_frames = fact.getUintValue(); // should be always '1'
 			fps.add(num_frames);
@@ -913,6 +918,11 @@ public:
 
 	virtual void setFact(uint idx, Fact fact) {
 		assert(idx == 0);
+
+        if (!fact.isDefined()) {
+            args[idx] = Fact();
+            return;
+        }
 		// replace the value with its increment rate per-second
 		ulong num_bytes = fact.getUintValue();
 		bps.add(num_bytes);

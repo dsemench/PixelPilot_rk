@@ -301,7 +301,16 @@ int process_rx(const msgpack::object& packet) {
         for (const auto &id : seen_rx_ids) {
             clear_wfbcli_rx_link_facts(id.c_str());
         }
+        seen_rx_ant_ids.clear();
         seen_rx_ids.clear();
+        for (const auto &id : seen_tx_ids) {
+            clear_wfbcli_tx_link_facts(id.c_str());
+        }
+        seen_tx_ant_ids.clear();
+        seen_tx_ids.clear();
+
+        clear_wfbcli_cli_header_facts();
+
         drone_connected = false;
     }
 

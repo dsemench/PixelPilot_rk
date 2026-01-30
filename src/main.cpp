@@ -136,6 +136,7 @@ int drm_fd = 0;
 pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
 extern bool osd_update_ready;
+extern bool drone_connected;
 int video_zpos = 1;
 
 bool mavlink_dvr_on_arm = false;
@@ -232,7 +233,7 @@ void init_buffer(MppFrame frame) {
 		info.fd = dph.fd;
 		ret = mpp_buffer_commit(mpi.frm_grp, &info);
 		assert(!ret);
-		mpi.frame_to_drm[i].prime_fd = info.fd; // dups fd						
+		mpi.frame_to_drm[i].prime_fd = info.fd; // dups fd
 		if (dph.fd != info.fd) {
 			ret = close(dph.fd);
 			assert(!ret);
@@ -245,7 +246,7 @@ void init_buffer(MppFrame frame) {
 		memset(offsets, 0, sizeof(offsets));
 		handles[0] = mpi.frame_to_drm[i].handle;
 		offsets[0] = 0;
-		pitches[0] = hor_stride;						
+		pitches[0] = hor_stride;
 		handles[1] = mpi.frame_to_drm[i].handle;
 		offsets[1] = pitches[0] * ver_stride;
 		pitches[1] = pitches[0];
@@ -308,7 +309,7 @@ void *__FRAME_THREAD__(void *param)
 					mpi.first_frame_ts = ats;
 				}
 
-				MppBuffer buffer = mpp_frame_get_buffer(frame);					
+				MppBuffer buffer = mpp_frame_get_buffer(frame);
 				if (buffer) {
 					output_list->video_poc = mpp_frame_get_poc(frame);
 					uint64_t feed_data_ts =  mpp_frame_get_pts(frame);
@@ -390,7 +391,7 @@ void *__DISPLAY_THREAD__(void *param)
 
 		if(enable_osd) {
 			ret = pthread_mutex_lock(&osd_mutex);
-			assert(!ret);		
+			assert(!ret);
 			ret = set_drm_object_property(output_list->video_request, &output_list->osd_plane, "FB_ID", output_list->osd_bufs[output_list->osd_buf_switch].fb);
 			assert(ret>0);
 		}
@@ -710,8 +711,18 @@ void read_video_stream(MppPacket &packet, int udp_port, const char* sock) {
 			restart_mpi(packet, rtp_receiver->get_video_codec());
 			rtp_receiver->start_receiving(cb);
 		}
-		else {
-	        sleep(10);
+        else {
+            if (!drone_connected) {
+                void *batch = osd_batch_init(4);
+
+                osd_add_clear_fact(batch, "video.displayed_frame", nullptr, 0);
+                osd_add_clear_fact(batch, "rtp.received_bytes", nullptr, 0);
+                osd_add_clear_fact(batch, "video.width", nullptr, 0);
+                osd_add_clear_fact(batch, "video.height", nullptr, 0);
+
+                osd_publish_batch(batch);
+            }
+            sleep(10);
 		}
     }
 	rtp_receiver->stop_receiving();
