@@ -30,6 +30,8 @@
 #include "rtp-demuxer.h"
 #include "rtp-profile.h"
 
+extern std::atomic<bool> drone_connected;
+
 // Main callback for packet processing after codec is known
 static int main_rtp_cb(void* param, const void* packet, int bytes, uint32_t timestamp, int flags)
 {
@@ -155,12 +157,29 @@ void RtpReceiver::rtp_receiver_thread()
     while (this->m_running->load()) {
         int ret = poll(fds, 1, 1000);
         if (ret < 0) { if (errno == EINTR) continue; perror("poll"); break; }
-        if (ret == 0) continue;
+        if (ret == 0) {
+            static auto prev_time = std::chrono::steady_clock::now();
+            auto current_time = std::chrono::steady_clock::now();
+
+            if (std::chrono::duration_cast<std::chrono::seconds>(current_time - prev_time).count() > 15) {
+                spdlog::error("[ RTP ] No packets received durring 15 sec");
+                if (!drone_connected.load())
+                {
+                    drone_connected.store(false);
+                }
+                prev_time = current_time;
+            }
+            continue;
+        }
         if (fds[0].revents & POLLIN) {
             struct sockaddr_in peer; socklen_t len = sizeof(peer);
             ssize_t n = recvfrom(m_socket, buffer, sizeof(buffer), 0, (struct sockaddr*)&peer, &len);
             if (n > 0) {
                 rtp_demuxer_input(demuxer, buffer, (int)n);
+                if (!drone_connected.load())
+                {
+                    drone_connected.store(true);
+                }
             }
         }
     }

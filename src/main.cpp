@@ -136,7 +136,7 @@ int drm_fd = 0;
 pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
 extern bool osd_update_ready;
-extern bool drone_connected;
+extern std::atomic<bool> drone_connected;
 int video_zpos = 1;
 
 bool mavlink_dvr_on_arm = false;
@@ -712,7 +712,7 @@ void read_video_stream(MppPacket &packet, int udp_port, const char* sock) {
 			rtp_receiver->start_receiving(cb);
 		}
         else {
-            if (!drone_connected) {
+            if (!drone_connected.load()) {
                 void *batch = osd_batch_init(4);
 
                 osd_add_clear_fact(batch, "video.displayed_frame", nullptr, 0);
